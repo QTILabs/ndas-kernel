@@ -1,4 +1,5 @@
-#define PCAP_DONT_INCLUDE_PCAP_BPF_H
+#include <linux/types.h>
+
 static const char* __doc__ = "XDP sample packet\n";
 
 #include <assert.h>
@@ -10,11 +11,8 @@ static const char* __doc__ = "XDP sample packet\n";
 #include <linux/if_link.h>
 #include <linux/perf_event.h>
 #include <net/if.h>
-#include <pcap/dlt.h>
-#include <pcap/pcap.h>
 #include <poll.h>
 #include <signal.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,6 +20,10 @@ static const char* __doc__ = "XDP sample packet\n";
 #include <sys/mman.h>
 #include <sys/resource.h>
 #include <sys/sysinfo.h>
+#define PCAP_DONT_INCLUDE_PCAP_BPF_H
+#include <pcap/dlt.h>
+#include <pcap/pcap.h>
+#include <stdint.h>
 #include <time.h>
 
 #include "../common/common_params.h"
@@ -182,7 +184,7 @@ static enum bpf_perf_event_ret bpf_perf_event_print(struct perf_event_header* hd
             uint64_t id;
             uint64_t lost;
         }* lost = (void*)e;
-        printf("lost %lld events\n", lost->lost);
+        printf("lost %lu events\n", lost->lost);
     } else {
         printf("unknown event type=%d size=%d\n", e->header.type, e->header.size);
     }
