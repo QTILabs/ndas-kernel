@@ -1,35 +1,31 @@
-#include <linux/types.h>
-
 static const char* __doc__ = "XDP sample packet\n";
 
-#include <assert.h>
-#include <bpf/bpf.h>
-#include <bpf/libbpf.h>
-#include <errno.h>
-#include <libgen.h>
-#include <linux/bpf.h>
-#include <linux/if_link.h>
-#include <linux/perf_event.h>
-#include <net/if.h>
-#include <poll.h>
-#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/ioctl.h>
-#include <sys/mman.h>
-#include <sys/resource.h>
+#include <linux/perf_event.h>
+#include <linux/bpf.h>
+#include <net/if.h>
+#include <errno.h>
+#include <assert.h>
 #include <sys/sysinfo.h>
+#include <sys/ioctl.h>
+#include <signal.h>
+#include <bpf/libbpf.h>
+#include <bpf/bpf.h>
+#include <sys/resource.h>
+#include <libgen.h>
+#include <linux/if_link.h>
+#include <poll.h>
+#include <sys/mman.h>
 #define PCAP_DONT_INCLUDE_PCAP_BPF_H
-#include <pcap/dlt.h>
 #include <pcap/pcap.h>
-#include <stdint.h>
-#include <time.h>
-
+#include <pcap/dlt.h>
+#include "perf-sys.h"
 #include "../common/common_params.h"
 #include "../common/common_user_bpf_xdp.h"
 #include "bpf_util.h"
-#include "perf-sys.h"
+#include <time.h>
 
 #ifndef __packed
     #define __packed __attribute__((packed))
@@ -45,22 +41,22 @@ static const char* __doc__ = "XDP sample packet\n";
 
 static int32_t pmu_fds[MAX_CPUS];
 static struct perf_event_mmap_page* headers[MAX_CPUS];
-static uint32_t prog_id;
+static __u32 prog_id;
 
 static pcap_t* pd;
 static pcap_dumper_t* pdumper;
-static uint32_t pcap_pkts;
+static __u32 pcap_pkts;
 
 typedef struct __packed OffloadedPacket {
-    uint16_t length;
-    uint8_t data[MAX_PACKET_SIZE];
+    __u16 length;
+    __u8 data[MAX_PACKET_SIZE];
 } OffloadedPacket;
 
 static const char* default_filename = "samples.pcap";
 
-static int32_t do_attach(int32_t idx, int32_t fd, const char* name, uint32_t xdp_flags) {
+static int32_t do_attach(int32_t idx, int32_t fd, const char* name, __u32 xdp_flags) {
     struct bpf_prog_info info = {};
-    uint32_t info_len = sizeof(info);
+    __u32 info_len = sizeof(info);
     int32_t err;
 
     err = bpf_set_link_xdp_fd(idx, fd, xdp_flags);
@@ -80,7 +76,7 @@ static int32_t do_attach(int32_t idx, int32_t fd, const char* name, uint32_t xdp
 }
 
 static int32_t do_detach(int32_t idx, const char* name) {
-    uint32_t curr_prog_id = 0;
+    __u32 curr_prog_id = 0;
     int32_t err = 0;
 
     err = bpf_get_link_xdp_id(idx, &curr_prog_id, 0);
@@ -132,7 +128,7 @@ static int32_t print_bpf_output(void* data, int32_t size) {
         printf("\n");
     }
 
-    pcap_dump((uint8_t*)pdumper, &h, e->data);
+    pcap_dump((__u8*)pdumper, &h, e->data);
     pcap_pkts++;
     return LIBBPF_PERF_EVENT_CONT;
 }
@@ -163,7 +159,7 @@ static void sig_handler(int32_t signo) {
 
 struct perf_event_sample {
     struct perf_event_header header;
-    uint32_t size;
+    __u32 size;
     char data[];
 };
 
@@ -181,10 +177,10 @@ static enum bpf_perf_event_ret bpf_perf_event_print(struct perf_event_header* hd
     } else if (e->header.type == PERF_RECORD_LOST) {
         struct {
             struct perf_event_header header;
-            uint64_t id;
-            uint64_t lost;
+            __u64 id;
+            __u64 lost;
         }* lost = (void*)e;
-        printf("lost %lu events\n", lost->lost);
+        printf("lost %llu events\n", lost->lost);
     } else {
         printf("unknown event type=%d size=%d\n", e->header.type, e->header.size);
     }
