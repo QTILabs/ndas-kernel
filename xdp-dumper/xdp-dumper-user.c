@@ -27,6 +27,8 @@ static const char* __doc__ = "XDP sample packet\n";
 #include "bpf_util.h"
 #include <time.h>
 
+#include "xdp-dumper-hook.h"
+
 #ifndef __packed
     #define __packed __attribute__((packed))
 #endif
@@ -252,6 +254,8 @@ static const struct option_wrapper long_options[]
        {{0, 0, NULL, 0}, NULL, false}};
 
 int32_t main(int32_t argc, char** argv) {
+    print_something();
+
     struct rlimit r = {RLIM_INFINITY, RLIM_INFINITY};
     struct bpf_prog_load_attr prog_load_attr = {
         .prog_type = BPF_PROG_TYPE_XDP,
