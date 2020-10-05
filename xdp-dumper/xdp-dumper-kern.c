@@ -1,50 +1,38 @@
 #include <linux/bpf.h>
+#include <linux/if_ether.h>
 #include <bpf/bpf_helpers.h>
 
-#include <assert.h>
-#include <stdint.h>
-
-#define MAX_PACKET_SIZE 2048
-#define MAX_CPUS        128
-
-#ifndef __packed
-    #define __packed __attribute__((packed))
-#endif
-
-#define min(x, y) ((x) < (y) ? (x) : (y))
-
-static_assert(sizeof(int) == sizeof(int32_t), "Invalid architecture!");
-static_assert(sizeof(long) == sizeof(int64_t), "Invalid architecture!");
+#define BPF_KERN_PROG
+#include "xdp-dumper.h"
 
 typedef struct xdp_md XDPContext;
 
-typedef struct __packed OffloadedPacket {
-    __u16 length;
-} OffloadedPacket;
-
 char _license[] SEC("license") = "GPL";
 
-struct bpf_map_def SEC("maps") my_map = {
+struct bpf_map_def SEC("maps") ndas_perf_events = {
     .type = BPF_MAP_TYPE_PERF_EVENT_ARRAY,
-    .key_size = sizeof(int32_t),
+    .key_size = sizeof(__u32),
     .value_size = sizeof(__u32),
     .max_entries = MAX_CPUS,
 };
 
-SEC("ndas_dumper")
-int32_t ndas_kernel(XDPContext* ctx) {
+SEC("ndas/perf_event_pusher")
+int32_t ndas_perf_event_pusher(XDPContext* ctx) {
     void* data_end = (void*)(int64_t)ctx->data_end;
     void* data = (void*)(int64_t)ctx->data;
 
     if (data < data_end) {
         __u64 flags = BPF_F_CURRENT_CPU;
         __u16 sample_size;
-        OffloadedPacket packet;
+        PacketSample packet = {0};
         packet.length = (__u16)(data_end - data);
+        packet.data_length = packet.length - (__u16)sizeof(struct ethhdr);
         sample_size = min(packet.length, MAX_PACKET_SIZE);
         flags |= ((__u64)sample_size) << 32;
-        bpf_perf_event_output(ctx, &my_map, flags, &packet, sizeof(OffloadedPacket));
+        bpf_perf_event_output(ctx, &ndas_perf_events, flags, &packet, sizeof(PacketSample));
     }
 
     return XDP_PASS;
 }
+
+#undef BPF_KERN_PROG
