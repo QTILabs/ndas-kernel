@@ -288,7 +288,7 @@ int32_t main(int32_t argc, char** argv) {
         return 1;
     }
 
-    snprintf(filename, sizeof(filename), "xdp_sample_pkts_kern.o");
+    snprintf(filename, sizeof(filename), "xdp-dumper-kern.o");
     prog_load_attr.file = filename;
 
     if (bpf_prog_load_xattr(&prog_load_attr, &obj, &prog_fd))
