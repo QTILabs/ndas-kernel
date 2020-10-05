@@ -57,6 +57,7 @@ clean:
 	$(MAKE) -C $(COMMON_DIR) clean
 	rm -f $(USER_TARGETS) $(XDP_OBJ) $(USER_OBJ) $(COPY_LOADER) $(COPY_STATS)
 	rm -f *.ll
+	rm -f *.o
 	rm -f *~
 
 ifdef COPY_LOADER
