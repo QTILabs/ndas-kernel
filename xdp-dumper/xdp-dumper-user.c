@@ -40,7 +40,9 @@ static const char* __doc__ = "XDP sample packet\n";
 #define MAX_PACKET_SIZE   2048
 #define MAX_CPUS          128
 #define NANOSECS_PER_USEC 1000
+#define NANOSECS_PER_SEC  1000000000
 
+static volatile int64_t llet_ns = 0;
 static int32_t pmu_fds[MAX_CPUS];
 static struct perf_event_mmap_page* headers[MAX_CPUS];
 static __u32 prog_id;
