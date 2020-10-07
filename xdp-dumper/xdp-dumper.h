@@ -56,8 +56,8 @@ static_assert(sizeof(PacketSample) == 4 + MAX_PACKET_SIZE, "Incorrect PacketSamp
 
 #ifndef BPF_KERN_PROG
 
-#include "bpf_util.h"
-#include "perf-sys.h"
+#include "../headers/bpf_util.h"
+#include "../headers/perf-sys.h"
 #include <bpf/libbpf.h>
 #include <bpf/bpf.h>
 #include <stdio.h>
