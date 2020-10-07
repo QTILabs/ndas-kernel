@@ -9,14 +9,14 @@ typedef struct xdp_md XDPContext;
 
 char _license[] SEC("license") = "GPL";
 
-struct bpf_map_def SEC("maps") ndas_perf_events = {
+struct bpf_map_def SEC("maps") BPF_KERN_MAP_NAME = {
     .type = BPF_MAP_TYPE_PERF_EVENT_ARRAY,
     .key_size = sizeof(__u32),
     .value_size = sizeof(__u32),
     .max_entries = MAX_CPUS,
 };
 
-SEC("ndas/perf_event_pusher")
+SEC(BPF_KERN_FUNC_NAME)
 int32_t ndas_perf_event_pusher(XDPContext* ctx) {
     void* data_end = (void*)(int64_t)ctx->data_end;
     void* data = (void*)(int64_t)ctx->data;

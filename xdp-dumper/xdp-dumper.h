@@ -5,6 +5,10 @@
 #include <assert.h>
 
 #define BPF_KERN_PROG_NAME "xdp-dumper-kern.o"
+#define BPF_KERN_FUNC_NAME "ndas/perf_event_pusher"
+#define BPF_KERN_MAP_NAME  ndas_perf_events
+#define QUOTE_IDENT(ident) #ident
+#define QUOTE_MACRO(macro) QUOTE_IDENT(macro)
 
 #ifndef __packed
 #define __packed __attribute__((packed))
@@ -80,36 +84,32 @@ static_assert(sizeof(PacketSample) == 4 + MAX_PACKET_SIZE, "Incorrect PacketSamp
 #include "../headers/linux/if_link.h"
 #include "pcapng.h"
 
-typedef enum LoopControlResult {
-    Success = 0,
-    InterfaceNotFound = -1,
-    NotRunning = -2,
-    DriverError = -4,
-    RLimitPermissionDenied = -8,
-    MapNotFound = -16,
-    AlreadyRunning = -32,
-    SystemError = -128,
-} LoopControlResult;
-
-typedef enum DumpSaveResult {
-    DumpSaved = 0,
-    DiskFull = -1,
-    PathNotFound = -2,
-    PermissionDenied = -4,
-    UnknownError = -8,
-} DumpSaveResult;
+typedef enum OperationResult {
+    RESULT_OK = 0,
+    RESULT_ERR_NIC_NOT_FOUND = 1,
+    RESULT_ERR_DRIVER_NO_SUPPORT = 2,
+    RESULT_ERR_RLIMIT_DENIED = 4,
+    RESULT_ERR_MAP_NOT_FOUND = 8,
+    RESULT_ERR_DISK_FULL = 16,
+    RESULT_ERR_PERMISSION_DENIED = 32,
+    RESULT_ERR_UNKNOWN = 64,
+} OperationResult;
 
 typedef enum bpf_perf_event_ret BPFPerfEventReturn;
 typedef BPFPerfEventReturn (*on_perfevent_func)(void* data, int32_t size);
 typedef void (*on_perfevent_missed_func)(uint64_t);
 
-extern uint8_t perfevent_is_running();
-extern LoopControlResult perfevent_loop_start(const char* interface_name, on_perfevent_func on_event_received,
-                                              on_perfevent_missed_func on_event_missed);
-extern LoopControlResult perfevent_loop_stop();
-extern DumpSaveResult helper_pcapng_save(const char* filename, const char* interface_name, uint64_t drop_count_delta,
-                                         int64_t timestamp, PacketSample* packet_sample, size_t count);
-extern int32_t helper_set_promiscuous_mode(const char* interface_name, uint8_t enable);
+typedef struct PerfEventLoopConfig {
+    on_perfevent_func on_event_received;
+    on_perfevent_missed_func on_event_missed;
+    const char* interface_name;
+} PerfEventLoopConfig;
+
+extern OperationResult perfevent_configure(PerfEventLoopConfig* source_config, uint8_t* permitted_cpu_count);
+extern OperationResult perfevent_set_promiscuous_mode(uint8_t enable);
+extern OperationResult perfevent_loop_tick(uint8_t cpu_index);
+extern OperationResult helper_pcapng_save(const char* filename, uint64_t drop_count_delta, int64_t timestamp,
+                                          size_t count, PacketSample* packet_sample);
 
 #endif
 
