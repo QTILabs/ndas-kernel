@@ -9,10 +9,13 @@ CC := gcc
 LIBBPF_DIR = ../libbpf/src
 COMMON_DIR = ../common
 
-all: xdp-dumper.o
+all: xdp-dumper.o pcapng.o
 
 xdp-dumper.o: xdp-dumper.c xdp-dumper.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+pcapng.o: pcapng.c pcapng.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
 include $(COMMON_DIR)/common.mk
-COMMON_OBJS := $(COMMON_DIR)/common_params.o xdp-dumper.o
+COMMON_OBJS := $(COMMON_DIR)/common_params.o xdp-dumper.o pcapng.o

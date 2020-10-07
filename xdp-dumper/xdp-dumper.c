@@ -15,7 +15,14 @@ typedef struct bpf_object BPFObject;
 typedef struct bpf_map BPFMap;
 typedef struct perf_event_mmap_page PerfEventMMapPage;
 typedef struct pollfd PollFd;
+typedef struct pcapng_dumper PCapNGDumper;
+typedef struct utsname SystemIdentification;
 typedef enum bpf_perf_event_ret BPFPerfEventReturn;
+
+typedef struct IFAddress {
+    char* ifname;
+    int ifindex;
+} IFAddress;
 
 typedef struct PerfEventSample {
     PerfEventHeader header;
@@ -185,8 +192,96 @@ static void* perf_event_loop(void* params) {
     return (void*)ret;
 }
 
-static int32_t get_if_index(const char* if_name) {
-    return if_nametoindex(if_name);
+static int32_t get_if_index(const char* interface_name) {
+    return if_nametoindex(interface_name);
+}
+
+static uint64_t get_if_speed(const char* interface_name) {
+#define MAX_MODE_MASKS 10
+    int32_t fd;
+    struct ifreq ifr;
+    struct {
+        struct ethtool_link_settings req;
+        uint32_t modes[3 * MAX_MODE_MASKS];
+    } ereq;
+
+    fd = socket(AF_INET, SOCK_DGRAM, 0);
+
+    if (fd < 0) {
+        return 0;
+    }
+
+    memset(&ereq, 0, sizeof(ereq));
+    ereq.req.cmd = ETHTOOL_GLINKSETTINGS;
+
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.ifr_name, interface_name, sizeof(ifr.ifr_name) - 1);
+    ifr.ifr_data = (void*)&ereq;
+
+    if (ioctl(fd, SIOCETHTOOL, &ifr) != 0) {
+        goto error_exit;
+    }
+
+    if (ereq.req.link_mode_masks_nwords >= 0 || ereq.req.link_mode_masks_nwords < -MAX_MODE_MASKS
+        || ereq.req.cmd != ETHTOOL_GLINKSETTINGS) {
+        goto error_exit;
+    }
+
+    ereq.req.link_mode_masks_nwords = -ereq.req.link_mode_masks_nwords;
+
+    if (ioctl(fd, SIOCETHTOOL, &ifr) != 0) {
+        goto error_exit;
+    }
+
+    if (ereq.req.speed == -1) {
+        ereq.req.speed = 0;
+    }
+
+    close(fd);
+    return ereq.req.speed * 1000000ULL;
+
+error_exit:
+    close(fd);
+    return 0;
+}
+
+static char* get_if_drv_info(const char* interface_name, char* buffer, size_t len) {
+    int32_t fd;
+    char* r_buffer = NULL;
+    struct ifreq ifr;
+    struct ethtool_drvinfo info;
+
+    if (buffer == NULL || len == 0) {
+        return NULL;
+    }
+
+    fd = socket(AF_INET, SOCK_DGRAM, 0);
+
+    if (fd < 0) {
+        return NULL;
+    }
+
+    memset(&info, 0, sizeof(info));
+    info.cmd = ETHTOOL_GDRVINFO;
+
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.ifr_name, interface_name, sizeof(ifr.ifr_name) - 1);
+    ifr.ifr_data = (void*)&info;
+
+    if (ioctl(fd, SIOCETHTOOL, &ifr) != 0) {
+        goto exit;
+    }
+
+    snprintf(buffer, len,
+             "driver: \"%s\", version: \"%s\", "
+             "fw-version: \"%s\", rom-version: \"%s\", "
+             "bus-info: \"%s\"",
+             info.driver, info.version, info.fw_version, info.erom_version, info.bus_info);
+
+    r_buffer = buffer;
+exit:
+    close(fd);
+    return r_buffer;
 }
 
 // API implementations
@@ -272,6 +367,82 @@ LoopControlResult perfevent_loop_stop() {
     return ((BPFPerfEventReturn)result) == LIBBPF_PERF_EVENT_DONE ? Success : DriverError;
 }
 
-DumpSaveResult helper_pcapng_save(const char* filename, PacketSample* packet_sample) {
+DumpSaveResult helper_pcapng_save(const char* filename, const char* interface_name, uint64_t drop_count_delta,
+                                  int64_t timestamp, PacketSample* packet_sample, size_t count) {
+    char if_drv[260];
+    char if_name[IFNAMSIZ + 7];
+    char if_descr[BPF_OBJ_NAME_LEN + IFNAMSIZ + 10];
+    uint64_t if_speed;
+    SystemIdentification utinfo;
+
+    memset(&utinfo, 0, sizeof(utinfo));
+    uname(&utinfo);
+    if_drv[0] = 0;
+    snprintf(if_drv, sizeof(if_drv), "%s %s %s %s", utinfo.sysname, utinfo.nodename, utinfo.release, utinfo.version);
+
+    PCapNGDumper* dumper = pcapng_dump_open(filename, NULL, utinfo.machine, if_drv, "ndas-pcapng-dumper 1.0.0-alpha.0");
+
+    if (!dumper) {
+        return PermissionDenied;
+    }
+
+    if_speed = get_if_speed(interface_name);
+    if_drv[0] = 0;
+    get_if_drv_info(interface_name, if_drv, sizeof(if_drv));
+    snprintf(if_name, sizeof(if_name), "%s@fentry", interface_name);
+    pcapng_dump_add_interface(dumper, MAX_PACKET_SIZE, if_name, if_descr, NULL, if_speed, 1, if_drv);
+    snprintf(if_name, sizeof(if_name), "%s@fexit", interface_name);
+    snprintf(if_descr, sizeof(if_descr), "%s:%s()@fexit", interface_name, "ndas/perf_event_pusher");
+    pcapng_dump_add_interface(dumper, MAX_PACKET_SIZE, if_name, if_descr, NULL, if_speed, 1, if_drv);
+
+    for (size_t i = 0; i < count; ++i) {
+        uint32_t packet_length = packet_sample[i].length;
+        struct pcapng_epb_options_s options = {};
+        options.flags = PCAPNG_EPB_FLAG_INBOUND;
+        options.dropcount = drop_count_delta;
+        options.packetid = NULL;
+        options.queue = NULL;
+        options.xdp_verdict = NULL;
+        pcapng_dump_enhanced_pkt(dumper, 0, packet_sample[i].raw, packet_length, packet_length, timestamp, &options);
+    }
+
+    pcapng_dump_flush(dumper);
+    pcapng_dump_close(dumper);
     return DumpSaved;
+}
+
+int32_t helper_set_promiscuous_mode(const char* interface_name, uint8_t enable) {
+    struct ifreq ifr;
+    int32_t rc = 0;
+    int32_t fd = socket(AF_INET, SOCK_DGRAM, 0);
+
+    if (fd < 0) {
+        return -errno;
+    }
+
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.ifr_name, interface_name, sizeof(ifr.ifr_name) - 1);
+
+    if (ioctl(fd, SIOCGIFFLAGS, &ifr) != 0) {
+        rc = -errno;
+        goto exit;
+    }
+
+    if (((ifr.ifr_flags & IFF_PROMISC) && enable) || (!(ifr.ifr_flags & IFF_PROMISC) && !enable)) {
+        goto exit;
+    }
+
+    if (enable) {
+        ifr.ifr_flags |= IFF_PROMISC;
+    } else {
+        ifr.ifr_flags &= ~IFF_PROMISC;
+    }
+
+    if (ioctl(fd, SIOCSIFFLAGS, &ifr) != 0) {
+        rc = -errno;
+        goto exit;
+    }
+exit:
+    close(fd);
+    return rc;
 }

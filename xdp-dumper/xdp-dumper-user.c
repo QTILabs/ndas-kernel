@@ -1,9 +1,13 @@
 #include "xdp-dumper.h"
 #include <signal.h>
 
+#define TARGET_IF "eth0"
+//#define TARGET_IF "enp8s0f1np1"
+
 static volatile uint64_t counter_missed_events = 0;
 static volatile uint64_t counter_events = 0;
 static volatile uint64_t bytes_captured = 0;
+static volatile uint64_t last_misses = 0;
 
 static BPFPerfEventReturn on_event_handler(void* data, int32_t size) {
     PacketSample* sample = (PacketSample*)data;
@@ -36,12 +40,12 @@ int32_t main(int32_t argc, char** argv) {
         return 1;
     }
 
-    switch (perfevent_loop_start("eth0", on_event_handler, on_missed_event_handler)) {
+    switch (perfevent_loop_start(TARGET_IF, on_event_handler, on_missed_event_handler)) {
         case InterfaceNotFound:
-            fprintf(stderr, "Cannot find interface eth0!");
+            fprintf(stderr, "Cannot find interface %s!", TARGET_IF);
             return 1;
         case DriverError:
-            fprintf(stderr, "XDP driver unsupported or denied by verifier eth0!");
+            fprintf(stderr, "XDP driver unsupported or denied by verifier %s!", TARGET_IF);
             return 1;
         case RLimitPermissionDenied:
             fprintf(stderr, "Cannot raise RLIMIT value!");

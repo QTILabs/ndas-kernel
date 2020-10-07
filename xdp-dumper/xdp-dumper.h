@@ -56,6 +56,10 @@ static_assert(sizeof(PacketSample) == 4 + MAX_PACKET_SIZE, "Incorrect PacketSamp
 
 #ifndef BPF_KERN_PROG
 
+#ifndef __USE_MISC
+#define __USE_MISC
+#endif
+
 #include "../headers/bpf_util.h"
 #include "../headers/perf-sys.h"
 #include <bpf/libbpf.h>
@@ -67,10 +71,14 @@ static_assert(sizeof(PacketSample) == 4 + MAX_PACKET_SIZE, "Incorrect PacketSamp
 #include <sys/resource.h>
 #include <unistd.h>
 #include <sys/mman.h>
+#include <sys/utsname.h>
 #include <poll.h>
 #include <pthread.h>
 #include <net/if.h>
+#include <linux/sockios.h>
+#include <linux/ethtool.h>
 #include "../headers/linux/if_link.h"
+#include "pcapng.h"
 
 typedef enum LoopControlResult {
     Success = 0,
@@ -99,7 +107,9 @@ extern uint8_t perfevent_is_running();
 extern LoopControlResult perfevent_loop_start(const char* interface_name, on_perfevent_func on_event_received,
                                               on_perfevent_missed_func on_event_missed);
 extern LoopControlResult perfevent_loop_stop();
-extern DumpSaveResult helper_pcapng_save(const char* filename, PacketSample* packet_sample);
+extern DumpSaveResult helper_pcapng_save(const char* filename, const char* interface_name, uint64_t drop_count_delta,
+                                         int64_t timestamp, PacketSample* packet_sample, size_t count);
+extern int32_t helper_set_promiscuous_mode(const char* interface_name, uint8_t enable);
 
 #endif
 
