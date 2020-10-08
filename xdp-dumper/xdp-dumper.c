@@ -47,6 +47,7 @@ static PerfEventMMapPage* headers[MAX_CPUS];
 static PerfEventLoopConfig config = {0};
 static PollFd pfds[MAX_CPUS];
 static uint8_t cpu_count = 0;
+static void* copy_mem[MAX_CPUS];
 
 static int32_t do_attach(int32_t idx, int32_t fd, const char* if_name, __u32 xdp_flags) {
     struct bpf_prog_info info = {};
@@ -248,24 +249,16 @@ exit:
 
 // API implementations
 
-OperationResult perfevent_loop_tick(uint8_t cpu_index) {
-    void* copy_mem = NULL;
+void perfevent_loop_tick(uint8_t cpu_index) {
     size_t copy_mem_length = 0;
-    poll(&pfds[cpu_index], 1, 0);
+    poll(pfds, cpu_count, 0);
 
     if (!pfds[cpu_index].revents) {
-        return RESULT_OK;
+        return;
     }
 
-    BPFPerfEventReturn result;
-    result = bpf_perf_event_read_simple(headers[cpu_index], page_cnt * page_size, page_size, &copy_mem,
-                                        &copy_mem_length, internal_on_event_func, config.on_event_received);
-
-    if (copy_mem) {
-        free(copy_mem);
-    }
-
-    return result == LIBBPF_PERF_EVENT_ERROR ? RESULT_ERR_UNKNOWN : RESULT_OK;
+    bpf_perf_event_read_simple(headers[cpu_index], page_cnt * page_size, page_size, &copy_mem[cpu_index],
+                               &copy_mem_length, internal_on_event_func, config.on_event_received);
 }
 
 OperationResult perfevent_configure(PerfEventLoopConfig* source_config, uint8_t* permitted_cpu_count) {
@@ -317,6 +310,8 @@ OperationResult perfevent_configure(PerfEventLoopConfig* source_config, uint8_t*
     perf_event_open(bpf_map_fd, cpu_count);
 
     for (uint8_t i = 0; i < cpu_count; ++i) {
+        copy_mem[i] = NULL;
+
         if (perf_event_mmap_header(pmu_fds[i], &headers[i]) < 0) {
             return RESULT_ERR_DRIVER_NO_SUPPORT;
         }
@@ -378,7 +373,7 @@ OperationResult helper_pcapng_save(const char* filename, uint64_t drop_count_del
     return RESULT_OK;
 }
 
-OperationResult helper_set_promiscuous_mode(const char* interface_name, uint8_t enable) {
+OperationResult perfevent_set_promiscuous_mode(uint8_t enable) {
     struct ifreq ifr;
     int32_t fd = socket(AF_INET, SOCK_DGRAM, 0);
     OperationResult result = RESULT_OK;
@@ -388,7 +383,7 @@ OperationResult helper_set_promiscuous_mode(const char* interface_name, uint8_t 
     }
 
     memset(&ifr, 0, sizeof(ifr));
-    strncpy(ifr.ifr_name, interface_name, sizeof(ifr.ifr_name) - 1);
+    strncpy(ifr.ifr_name, config.interface_name, sizeof(ifr.ifr_name) - 1);
 
     if (ioctl(fd, SIOCGIFFLAGS, &ifr) != 0) {
         result = RESULT_ERR_PERMISSION_DENIED;

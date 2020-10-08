@@ -1,7 +1,8 @@
 #include "xdp-dumper.h"
 #include <signal.h>
 
-#define TARGET_IF "eth0"
+//#define TARGET_IF "eth0"
+#define TARGET_IF "enp8s0f1np1"
 
 typedef struct PollingThreadConfig {
     uint8_t current_cpu_id;
