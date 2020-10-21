@@ -47,7 +47,6 @@ static PerfEventMMapPage* headers[MAX_CPUS];
 static PerfEventLoopConfig config = {0};
 static PollFd pfds[MAX_CPUS];
 static uint8_t cpu_count = 0;
-static void* copy_mem[MAX_CPUS];
 
 static int32_t do_attach(int32_t idx, int32_t fd, const char* if_name, __u32 xdp_flags) {
     struct bpf_prog_info info = {};
@@ -249,16 +248,15 @@ exit:
 
 // API implementations
 
-void perfevent_loop_tick(uint8_t cpu_index) {
-    size_t copy_mem_length = 0;
-    poll(pfds, cpu_count, 0);
+void perfevent_loop_tick(uint8_t cpu_index, void** temp_buffer, size_t* copy_mem_length) {
+    poll(&pfds[cpu_index], 1, 1);
 
     if (!pfds[cpu_index].revents) {
         return;
     }
 
-    bpf_perf_event_read_simple(headers[cpu_index], page_cnt * page_size, page_size, &copy_mem[cpu_index],
-                               &copy_mem_length, internal_on_event_func, config.on_event_received);
+    bpf_perf_event_read_simple(headers[cpu_index], page_cnt * page_size, page_size, temp_buffer, copy_mem_length,
+                               internal_on_event_func, config.on_event_received);
 }
 
 OperationResult perfevent_configure(PerfEventLoopConfig* source_config, uint8_t* permitted_cpu_count) {
@@ -310,8 +308,6 @@ OperationResult perfevent_configure(PerfEventLoopConfig* source_config, uint8_t*
     perf_event_open(bpf_map_fd, cpu_count);
 
     for (uint8_t i = 0; i < cpu_count; ++i) {
-        copy_mem[i] = NULL;
-
         if (perf_event_mmap_header(pmu_fds[i], &headers[i]) < 0) {
             return RESULT_ERR_DRIVER_NO_SUPPORT;
         }
@@ -386,11 +382,6 @@ OperationResult perfevent_set_promiscuous_mode(uint8_t enable) {
     strncpy(ifr.ifr_name, config.interface_name, sizeof(ifr.ifr_name) - 1);
 
     if (ioctl(fd, SIOCGIFFLAGS, &ifr) != 0) {
-        result = RESULT_ERR_PERMISSION_DENIED;
-        goto exit;
-    }
-
-    if (((ifr.ifr_flags & IFF_PROMISC) && enable) || (!(ifr.ifr_flags & IFF_PROMISC) && !enable)) {
         result = RESULT_ERR_PERMISSION_DENIED;
         goto exit;
     }

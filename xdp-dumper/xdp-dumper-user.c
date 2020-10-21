@@ -2,7 +2,7 @@
 #include <signal.h>
 
 //#define TARGET_IF "eth0"
-#define TARGET_IF "enp8s0f1np1"
+#define TARGET_IF "vethacb7d1b"
 
 typedef struct PollingThreadConfig {
     uint8_t current_cpu_id;
@@ -35,10 +35,12 @@ static void handler_unix_signal(int32_t signo) {
 
 static void* polling_thread_loop(void* params) {
     PollingThreadConfig* polling_thread_config = (PollingThreadConfig*)params;
+    void* temp_buffer = calloc(16384, sizeof(uint8_t));
+    size_t temp_buffer_length = 0;
 
     while (!stop_requested) {
         usleep(polling_thread_config->sleep_span_us);
-        perfevent_loop_tick(polling_thread_config->current_cpu_id);
+        perfevent_loop_tick(polling_thread_config->current_cpu_id, &temp_buffer, &temp_buffer_length);
     }
 
     return NULL;

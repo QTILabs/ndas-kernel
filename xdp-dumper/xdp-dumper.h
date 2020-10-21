@@ -107,7 +107,7 @@ typedef struct PerfEventLoopConfig {
 
 extern OperationResult perfevent_configure(PerfEventLoopConfig* source_config, uint8_t* permitted_cpu_count);
 extern OperationResult perfevent_set_promiscuous_mode(uint8_t enable);
-extern void perfevent_loop_tick(uint8_t cpu_index);
+extern void perfevent_loop_tick(uint8_t cpu_index, void** temp_buffer, size_t* copy_mem_length);
 extern OperationResult helper_pcapng_save(const char* filename, uint64_t drop_count_delta, int64_t timestamp,
                                           size_t count, PacketSample* packet_sample);
 
