@@ -20,11 +20,11 @@
 #endif
 
 #ifndef PAGE_COUNT
-#define PAGE_COUNT 1024
+#define PAGE_COUNT 4096
 #endif
 
 #ifndef MAX_CPUS
-#define MAX_CPUS 32
+#define MAX_CPUS 128
 #endif
 
 #ifndef min
