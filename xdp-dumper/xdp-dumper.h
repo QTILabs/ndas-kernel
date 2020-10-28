@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <assert.h>
+#include <asm-generic/int-ll64.h>
 
 #define BPF_KERN_PROG_NAME "xdp-dumper-kern.o"
 #define BPF_KERN_FUNC_NAME "ndas/perf_event_pusher"
@@ -18,8 +19,12 @@
 #define MAX_PACKET_SIZE 2048
 #endif
 
+#ifndef PAGE_COUNT
+#define PAGE_COUNT 1024
+#endif
+
 #ifndef MAX_CPUS
-#define MAX_CPUS 128
+#define MAX_CPUS 32
 #endif
 
 #ifndef min
@@ -35,28 +40,15 @@ extern "C" {
 #endif
 #endif
 
-#ifdef BPF_KERN_PROG
+typedef union __packed PacketSampleHeader {
+    struct __packed {
+        __u16 length;
+        __u16 data_length;
+    } structured;
+    __u8 raw[4];
+} PacketSampleHeader;
 
-typedef struct __packed PacketSample {
-    __u16 length;
-    __u16 data_length;
-} PacketSample;
-
-#else
-
-typedef struct __packed PacketSample {
-    uint16_t length;
-    uint16_t data_length;
-    uint8_t raw[MAX_PACKET_SIZE];
-} PacketSample;
-
-#endif
-
-#ifdef BPF_KERN_PROG
-static_assert(sizeof(PacketSample) == 4, "Incorrect PacketSample definition!");
-#else
-static_assert(sizeof(PacketSample) == 4 + MAX_PACKET_SIZE, "Incorrect PacketSample definition!");
-#endif
+static_assert(sizeof(PacketSampleHeader) == 4, "Incorrect PacketSample definition!");
 
 #ifndef BPF_KERN_PROG
 
@@ -109,7 +101,7 @@ extern OperationResult perfevent_configure(PerfEventLoopConfig* source_config, u
 extern OperationResult perfevent_set_promiscuous_mode(uint8_t enable);
 extern void perfevent_loop_tick(uint8_t cpu_index, void** temp_buffer, size_t* copy_mem_length);
 extern OperationResult helper_pcapng_save(const char* filename, uint64_t drop_count_delta, int64_t timestamp,
-                                          size_t count, PacketSample* packet_sample);
+                                          size_t count, PacketSampleHeader* packet_sample, uint8_t** data);
 
 #endif
 

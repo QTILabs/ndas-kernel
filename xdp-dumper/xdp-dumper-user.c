@@ -1,8 +1,7 @@
 #include "xdp-dumper.h"
 #include <signal.h>
 
-//#define TARGET_IF "eth0"
-#define TARGET_IF "vethacb7d1b"
+#define TARGET_IF "vetheaa237c"
 
 typedef struct PollingThreadConfig {
     uint8_t current_cpu_id;
@@ -19,9 +18,8 @@ static pthread_t* polling_threads = NULL;
 static PollingThreadConfig* polling_threads_config = NULL;
 
 static BPFPerfEventReturn on_event_handler(void* data, int32_t size) {
-    PacketSample* sample = (PacketSample*)data;
     counter_events++;
-    bytes_captured += sample->length;
+    bytes_captured += size;
     return LIBBPF_PERF_EVENT_CONT;
 }
 

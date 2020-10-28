@@ -40,13 +40,14 @@ static volatile uint8_t stop_requested = 0;
 static volatile uint8_t loop_started = 0;
 static __u32 prog_id;
 static int32_t page_size;
-static int32_t page_cnt = 8;
+static int32_t page_cnt = PAGE_COUNT;
 static int32_t pmu_fds[MAX_CPUS];
 static pthread_t thread_perf_event_loop;
 static PerfEventMMapPage* headers[MAX_CPUS];
 static PerfEventLoopConfig config = {0};
 static PollFd pfds[MAX_CPUS];
 static uint8_t cpu_count = 0;
+static size_t current_mmap_size = 0;
 
 static int32_t do_attach(int32_t idx, int32_t fd, const char* if_name, __u32 xdp_flags) {
     struct bpf_prog_info info = {};
@@ -119,34 +120,32 @@ static void perf_event_open(int32_t map_fd, int32_t num) {
 }
 
 static BPFPerfEventReturn internal_on_event_func(struct perf_event_header* hdr, void* private_data) {
-    PerfEventSample* e = (PerfEventSample*)hdr;
-    on_perfevent_func fn = private_data;
-    int32_t ret;
+    int32_t ret = LIBBPF_PERF_EVENT_ERROR;
 
-    if (e->header.type == PERF_RECORD_SAMPLE) {
-        ret = fn(e->data, e->size);
-
-        if (ret != LIBBPF_PERF_EVENT_CONT) {
-            return ret;
-        }
-    } else if (e->header.type == PERF_RECORD_LOST) {
-        PerfEventLost* lost = (void*)e;
+    if (hdr->type == PERF_RECORD_SAMPLE) {
+        PerfEventSample* e = (PerfEventSample*)hdr;
+        PacketSampleHeader pshu = {0};
+        memcpy(pshu.raw, e->data, 4);
+        ret = config.on_event_received(e->data + 4, pshu.structured.length);
+    } else if (hdr->type == PERF_RECORD_LOST) {
+        PerfEventLost* lost = (void*)hdr;
         config.on_event_missed(lost->lost);
+        ret = LIBBPF_PERF_EVENT_CONT;
     }
 
-    return LIBBPF_PERF_EVENT_CONT;
+    return ret;
 }
 
 static int32_t perf_event_mmap_header(int32_t fd, PerfEventMMapPage** header) {
     void* base;
-    int32_t mmap_size;
-
     page_size = getpagesize();
-    mmap_size = page_size * (page_cnt + 1);
+    current_mmap_size = page_size * page_cnt;
+    size_t mmap_with_padding = current_mmap_size + page_size;
 
-    base = mmap(NULL, mmap_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    base = mmap(NULL, mmap_with_padding, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+
     if (base == MAP_FAILED) {
-        printf("mmap err\n");
+        printf("MMAP error!\n");
         return -1;
     }
 
@@ -255,7 +254,7 @@ void perfevent_loop_tick(uint8_t cpu_index, void** temp_buffer, size_t* copy_mem
         return;
     }
 
-    bpf_perf_event_read_simple(headers[cpu_index], page_cnt * page_size, page_size, temp_buffer, copy_mem_length,
+    bpf_perf_event_read_simple(headers[cpu_index], current_mmap_size, page_size, temp_buffer, copy_mem_length,
                                internal_on_event_func, config.on_event_received);
 }
 
@@ -326,7 +325,7 @@ OperationResult perfevent_configure(PerfEventLoopConfig* source_config, uint8_t*
 }
 
 OperationResult helper_pcapng_save(const char* filename, uint64_t drop_count_delta, int64_t timestamp, size_t count,
-                                   PacketSample* packet_sample) {
+                                   PacketSampleHeader* packet_sample, uint8_t** data) {
     char if_drv[260];
     char if_name[IFNAMSIZ + 7];
     char if_descr[BPF_OBJ_NAME_LEN + IFNAMSIZ + 10];
@@ -354,14 +353,14 @@ OperationResult helper_pcapng_save(const char* filename, uint64_t drop_count_del
     pcapng_dump_add_interface(dumper, MAX_PACKET_SIZE, if_name, if_descr, NULL, if_speed, 1, if_drv);
 
     for (size_t i = 0; i < count; ++i) {
-        uint32_t packet_length = packet_sample[i].length;
+        uint32_t packet_length = packet_sample[i].structured.length;
         struct pcapng_epb_options_s options = {};
         options.flags = PCAPNG_EPB_FLAG_INBOUND;
         options.dropcount = drop_count_delta;
         options.packetid = NULL;
         options.queue = NULL;
         options.xdp_verdict = NULL;
-        pcapng_dump_enhanced_pkt(dumper, 0, packet_sample[i].raw, packet_length, packet_length, timestamp, &options);
+        pcapng_dump_enhanced_pkt(dumper, 0, data[i], packet_length, packet_length, timestamp, &options);
     }
 
     pcapng_dump_flush(dumper);

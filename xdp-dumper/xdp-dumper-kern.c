@@ -24,12 +24,12 @@ int32_t ndas_perf_event_pusher(XDPContext* ctx) {
     if (data < data_end) {
         __u64 flags = BPF_F_CURRENT_CPU;
         __u16 sample_size;
-        PacketSample packet = {0};
-        packet.length = (__u16)(data_end - data);
-        packet.data_length = packet.length - (__u16)sizeof(struct ethhdr);
-        sample_size = min(packet.length, MAX_PACKET_SIZE);
+        PacketSampleHeader packet = {0};
+        packet.structured.length = (__u16)(data_end - data);
+        packet.structured.data_length = packet.structured.length - (__u16)sizeof(struct ethhdr);
+        sample_size = min(packet.structured.length, MAX_PACKET_SIZE);
         flags |= ((__u64)sample_size) << 32;
-        bpf_perf_event_output(ctx, &ndas_perf_events, flags, &packet, sizeof(PacketSample));
+        bpf_perf_event_output(ctx, &ndas_perf_events, flags, packet.raw, sizeof(PacketSampleHeader));
     }
 
     return XDP_PASS;
