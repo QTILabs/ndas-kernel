@@ -44,10 +44,12 @@ static int32_t page_cnt = PAGE_COUNT;
 static int32_t pmu_fds[MAX_CPUS];
 static pthread_t thread_perf_event_loop;
 static PerfEventMMapPage* headers[MAX_CPUS];
-static PerfEventLoopConfig config = {0};
 static PollFd pfds[MAX_CPUS];
 static uint8_t cpu_count = 0;
 static size_t current_mmap_size = 0;
+static on_perfevent_func on_event_received;
+static on_perfevent_missed_func on_event_missed;
+static char* interface_name;
 
 static int32_t do_attach(int32_t idx, int32_t fd, const char* if_name, __u32 xdp_flags) {
     struct bpf_prog_info info = {};
@@ -76,30 +78,13 @@ static int32_t do_attach(int32_t idx, int32_t fd, const char* if_name, __u32 xdp
     return err;
 }
 
-static int32_t do_detach(int32_t idx, const char* if_name) {
-    __u32 curr_prog_id = 0;
-    int32_t err = 0;
-
-    err = bpf_get_link_xdp_id(idx, &curr_prog_id, 0);
-
-    if (err) {
-        fprintf(stderr, "bpf_get_link_xdp_id failed\n");
-        return err;
+static int32_t do_detach(int32_t idx) {
+    if (bpf_set_link_xdp_fd(idx, -1, 0) != 0) {
+        fprintf(stderr, "ERROR: failed to detach prog from %s\n", interface_name);
+        return -1;
     }
 
-    if (prog_id == curr_prog_id) {
-        err = bpf_set_link_xdp_fd(idx, -1, 0);
-
-        if (err < 0) {
-            fprintf(stderr, "ERROR: failed to detach prog from %s\n", if_name);
-        }
-    } else if (!curr_prog_id) {
-        fprintf(stderr, "couldn't find a prog id on a %s\n", if_name);
-    } else {
-        fprintf(stderr, "program on interface changed, not removing\n");
-    }
-
-    return err;
+    return 0;
 }
 
 static void perf_event_open(int32_t map_fd, int32_t num) {
@@ -126,10 +111,10 @@ static BPFPerfEventReturn internal_on_event_func(struct perf_event_header* hdr, 
         PerfEventSample* e = (PerfEventSample*)hdr;
         PacketSampleHeader pshu = {0};
         memcpy(pshu.raw, e->data, 4);
-        ret = config.on_event_received(e->data + 4, pshu.structured.length);
+        ret = on_event_received(e->data + 4, pshu.structured.length);
     } else if (hdr->type == PERF_RECORD_LOST) {
         PerfEventLost* lost = (void*)hdr;
-        config.on_event_missed(lost->lost);
+        on_event_missed(lost->lost);
         ret = LIBBPF_PERF_EVENT_CONT;
     }
 
@@ -255,13 +240,23 @@ void perfevent_loop_tick(uint8_t cpu_index, void** temp_buffer, size_t* copy_mem
     }
 
     bpf_perf_event_read_simple(headers[cpu_index], current_mmap_size, page_size, temp_buffer, copy_mem_length,
-                               internal_on_event_func, config.on_event_received);
+                               internal_on_event_func, on_event_received);
+}
+
+OperationResult perfevent_cleanup() {
+    if (do_detach(get_if_index(interface_name)) != 0) {
+        return RESULT_ERR_UNKNOWN;
+    }
+
+    return RESULT_OK;
 }
 
 OperationResult perfevent_configure(PerfEventLoopConfig* source_config, uint8_t* permitted_cpu_count) {
-    config.on_event_missed = source_config->on_event_missed;
-    config.on_event_received = source_config->on_event_received;
-    config.interface_name = source_config->interface_name;
+    on_event_missed = source_config->on_event_missed;
+    on_event_received = source_config->on_event_received;
+    interface_name = (char*)calloc(strlen(source_config->interface_name) + 1, sizeof(char));
+    strcpy(interface_name, source_config->interface_name);
+    assert(strcmp(interface_name, source_config->interface_name) == 0);
 
     RLimit rlim = {RLIM_INFINITY, RLIM_INFINITY};
     BPFProgramLoadAttribute prog_load_attr = {
@@ -274,7 +269,7 @@ OperationResult perfevent_configure(PerfEventLoopConfig* source_config, uint8_t*
     __u32 xdp_flags = XDP_FLAGS_DRV_MODE;
     cpu_count = bpf_num_possible_cpus();
     *permitted_cpu_count = cpu_count;
-    int32_t if_index = get_if_index(config.interface_name);
+    int32_t if_index = get_if_index(interface_name);
 
     if (if_index == -1) {
         return RESULT_ERR_NIC_NOT_FOUND;
@@ -300,7 +295,7 @@ OperationResult perfevent_configure(PerfEventLoopConfig* source_config, uint8_t*
 
     bpf_map_fd = bpf_map__fd(bpf_map);
 
-    if (do_attach(if_index, prog_fd, config.interface_name, xdp_flags) != 0) {
+    if (do_attach(if_index, prog_fd, interface_name, xdp_flags) != 0) {
         return RESULT_ERR_DRIVER_NO_SUPPORT;
     }
 
@@ -343,13 +338,13 @@ OperationResult helper_pcapng_save(const char* filename, uint64_t drop_count_del
         return RESULT_ERR_PERMISSION_DENIED;
     }
 
-    if_speed = get_if_speed(config.interface_name);
+    if_speed = get_if_speed(interface_name);
     if_drv[0] = 0;
-    get_if_drv_info(config.interface_name, if_drv, sizeof(if_drv));
-    snprintf(if_name, sizeof(if_name), "%s@fentry", config.interface_name);
+    get_if_drv_info(interface_name, if_drv, sizeof(if_drv));
+    snprintf(if_name, sizeof(if_name), "%s@fentry", interface_name);
     pcapng_dump_add_interface(dumper, MAX_PACKET_SIZE, if_name, if_descr, NULL, if_speed, 1, if_drv);
-    snprintf(if_name, sizeof(if_name), "%s@fexit", config.interface_name);
-    snprintf(if_descr, sizeof(if_descr), "%s:%s()@fexit", config.interface_name, BPF_KERN_FUNC_NAME);
+    snprintf(if_name, sizeof(if_name), "%s@fexit", interface_name);
+    snprintf(if_descr, sizeof(if_descr), "%s:%s()@fexit", interface_name, BPF_KERN_FUNC_NAME);
     pcapng_dump_add_interface(dumper, MAX_PACKET_SIZE, if_name, if_descr, NULL, if_speed, 1, if_drv);
 
     for (size_t i = 0; i < count; ++i) {
@@ -378,7 +373,7 @@ OperationResult perfevent_set_promiscuous_mode(uint8_t enable) {
     }
 
     memset(&ifr, 0, sizeof(ifr));
-    strncpy(ifr.ifr_name, config.interface_name, sizeof(ifr.ifr_name) - 1);
+    strncpy(ifr.ifr_name, interface_name, sizeof(ifr.ifr_name) - 1);
 
     if (ioctl(fd, SIOCGIFFLAGS, &ifr) != 0) {
         result = RESULT_ERR_PERMISSION_DENIED;
