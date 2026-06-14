@@ -1,0 +1,6 @@
+[project]
+name = "qti-ndas-kernel"
+slug = "qti-ndas-kernel"
+
+[amem]
+server = "https://amem.flusci.org"
